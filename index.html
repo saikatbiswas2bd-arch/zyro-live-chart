@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Live Order Flow – Binance Spot</title>
+<style>
+:root{--bg:#10141a;--card:#171d26;--tx:#e8edf3;--mu:#8793a3;--up:#34b27b;--dn:#ef5b5b;--ac:#6aa7ff;--wr:#e0a82e;--ln:#2a3340;color-scheme:dark}
+@media(prefers-color-scheme:light){:root{--bg:#f3f5f8;--card:#fff;--tx:#18202b;--mu:#5b6676;--up:#12805a;--dn:#c93a3a;--ac:#1a62d6;--wr:#9a6700;--ln:#d5dbe3;color-scheme:light}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Noto Sans Bengali",sans-serif;padding:max(12px,env(safe-area-inset-top)) 12px max(24px,env(safe-area-inset-bottom))}
+.wrap{max-width:1100px;margin:0 auto}
+h1{font-size:18px;margin:6px 0 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--wr)}.dot.on{background:var(--up)}
+#tfs{display:flex;flex-wrap:wrap;gap:6px}
+.px{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+#st{color:var(--mu);font-weight:400;font-size:13px}
+.bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+button,select{background:var(--card);color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
+button.on{border-color:var(--ac);color:var(--ac)}
+button:focus-visible,select:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:8px;margin-bottom:10px}
+.c{background:var(--card);border:1px solid var(--ln);border-radius:8px;padding:7px 10px}
+.c small{color:var(--mu);display:block;font-size:12px}.c b{font-size:16px;font-weight:600}
+canvas{width:100%;height:480px;background:var(--card);border:1px solid var(--ln);border-radius:8px;touch-action:pan-y;display:block}
+.meter{display:grid;gap:8px;margin-bottom:10px}
+.m span{font-size:13px;display:block;margin-bottom:3px}
+.m i{display:block;height:10px;border-radius:5px;background:var(--dn);overflow:hidden}
+.m u{display:block;height:100%;background:var(--up);text-decoration:none}
+.note{color:var(--mu);font-size:12px;margin:10px 0 0;max-width:80ch}
+.up{color:var(--up)}.dn{color:var(--dn)}.wr{color:var(--wr)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Order Flow <b class="px" id="px"></b> <span class="dot" id="dot"></span><span id="st">সংযোগ হচ্ছে…</span></h1>
+  <div class="bar"><select id="sym" aria-label="Market">
+    <optgroup label="Crypto / EUR (Binance spot)"><option value="BTCUSDT">BTCUSDT</option><option value="ETHUSDT">ETHUSDT</option><option value="SOLUSDT">SOLUSDT</option><option value="BNBUSDT">BNBUSDT</option><option value="EURUSDT">EUR/USDT (EURUSD proxy)</option></optgroup>
+    <optgroup label="TradFi proxy (Binance Futures, কিছু অঞ্চলে বন্ধ)"><option value="f:XAUUSDT">Gold XAUUSDT (XAUUSD proxy)</option><option value="f:XAGUSDT">Silver XAGUSDT</option><option value="f:CLUSDT">WTI Oil CLUSDT (USOIL proxy)</option><option value="f:QQQUSDT">Nasdaq-100 QQQUSDT (US100 proxy)</option></optgroup>
+  </select><span id="tfs"></span><span id="zb" style="display:flex;gap:6px"><button data-z="in" aria-label="Zoom in">＋ জুম</button><button data-z="out" aria-label="Zoom out">－ জুম</button><button data-z="reset">রিসেট</button></span><span id="tag" class="wr"></span></div>
+  <div class="meter" id="meter"></div>
+  <div class="cards" id="cards"></div>
+  <canvas id="cv" role="img" aria-label="Live price, delta and cumulative delta chart"></canvas>
+  <p class="note">জুম: ＋/－ বোতাম, মাউস হুইল, বা দুই আঙুলে পিঞ্চ। পুরোনো candle দেখতে চার্ট ডানে টেনে সরান। কোনো candle-এ চাপ দিলে (বা মাউস রাখলে) তার সংখ্যা ওপরে দেখাবে। Buy = taker buy volume, Sell = বাকি volume, Delta = Buy − Sell, Pressure = Buy ÷ Total। ডেটা Binance থেকে সরাসরি আপনার ব্রাউজারে আসে, পুরো বাজারের ছবি নয়। Gold, Oil, Nasdaq ও EUR হলো Binance-এর নিজস্ব বাজারের (perpetual বা spot) ডেটা, আসল XAUUSD, USOIL, US100 বা EURUSD বাজারের নয়, তাই দাম ও volume কিছুটা আলাদা হতে পারে। এটি তথ্য, বিনিয়োগ পরামর্শ নয়; ট্রেডে ক্ষতি হতে পারে।</p>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const TFS=["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"];
+const REST=["https://data-api.binance.vision","https://api.binance.com"];
+const WS=["wss://data-stream.binance.vision","wss://stream.binance.com:9443"];
+const FAPI=["https://fapi.binance.com"];
+const PROXY={XAUUSDT:"Binance Futures-এর Gold perpetual (XAUUSD-এর proxy)",XAGUSDT:"Binance Futures-এর Silver perpetual",CLUSDT:"Binance Futures-এর WTI Oil perpetual (USOIL-এর proxy)",QQQUSDT:"Binance Futures-এর Nasdaq-100 ETF perpetual (US100-এর proxy)",EURUSDT:"Binance spot EUR/USDT (EURUSD-এর proxy)"};
+const fp=v=>v.toFixed(v<10?5:v<100?4:2);
+let sym="BTCUSDT",mk="s",tf="5m",C=[],sel=-1,ws=null,gen=0,q=0,vis=120,off=0;
+function poll(g){
+  if(g!==gen)return;
+  fetch(`${FAPI[0]}/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=2`).then(r=>r.json()).then(a=>{
+    if(g!==gen||!Array.isArray(a))return;
+    setSt(true,"live (প্রতি ২ সেকেন্ডে আপডেট)");
+    a.map(row).forEach(x=>{const L=C[C.length-1];
+      if(L&&L.t===x.t)C[C.length-1]=x;else if(!L||x.t>L.t){C.push(x);if(C.length>500)C.shift()}});
+    redraw();
+  }).catch(()=>setSt(false,"আবার চেষ্টা হচ্ছে…")).finally(()=>setTimeout(()=>poll(g),2000));
+}
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const f=x=>Math.abs(x)>=1000?(x/1000).toFixed(2)+"k":x.toFixed(2);
+const ts=t=>new Date(t).toISOString().slice(5,16).replace("T"," ");
+const redraw=()=>{if(!q){q=1;requestAnimationFrame(()=>{q=0;draw()})}};
+const setSt=(on,t)=>{$("dot").className="dot"+(on?" on":"");$("st").textContent=t};
+const row=r=>({t:r[0],o:+r[1],h:+r[2],l:+r[3],c:+r[4],v:+r[5],b:+r[9]});
+
+$("tfs").innerHTML=TFS.map(t=>`<button data-t="${t}">${t}</button>`).join(" ");
+$("tfs").onclick=e=>{if(e.target.dataset.t){tf=e.target.dataset.t;start()}};
+$("sym").onchange=e=>{const v=e.target.value;mk=v.startsWith("f:")?"f":"s";sym=v.replace("f:","");start()};
+
+async function start(){
+  const g=++gen;
+  if(ws){ws.onclose=null;ws.close()}
+  document.querySelectorAll("#tfs button").forEach(b=>b.classList.toggle("on",b.dataset.t===tf));
+  setSt(false,"ডেটা আনা হচ্ছে…");C=[];sel=-1;off=0;vis=120;
+  let err="";
+  $("tag").textContent=PROXY[sym]||"";
+  for(const h of (mk==="f"?FAPI:REST)){
+    const nm=h.replace("https://","");
+    try{const r=await fetch(`${h}${mk==="f"?"/fapi/v1":"/api/v3"}/klines?symbol=${sym}&interval=${tf}&limit=500`);
+      if(r.ok){C=(await r.json()).map(row);break}err+=` [${nm}: HTTP ${r.status}]`}catch(e){err+=` [${nm}: ${e.message}]`}
+  }
+  if(g!==gen)return;
+  if(!C.length){setSt(false,(err.includes("451")?"Binance এই বাজারটি আপনার অঞ্চলে বন্ধ রেখেছে। অন্য বাজার বেছে নিন.":"ডেটা আনা যায়নি.")+err);draw();return}
+  draw();mk==="f"?poll(g):connect(g,0);
+}
+function connect(g,i){
+  if(g!==gen)return;
+  let ok=false;
+  ws=new WebSocket(`${WS[i%WS.length]}/ws/${sym.toLowerCase()}@kline_${tf}`);
+  ws.onopen=()=>{ok=true;setSt(true,"live")};
+  ws.onmessage=m=>{
+    const k=JSON.parse(m.data).k;if(!k)return;
+    const x={t:k.t,o:+k.o,h:+k.h,l:+k.l,c:+k.c,v:+k.v,b:+k.V},L=C[C.length-1];
+    if(L&&L.t===x.t)C[C.length-1]=x;else{C.push(x);if(C.length>500)C.shift()}
+    redraw();
+  };
+  ws.onclose=()=>{if(g!==gen)return;setSt(false,"আবার সংযোগ হচ্ছে…");setTimeout(()=>connect(g,ok?i:i+1),2500)};
+}
+function cards(){
+  const i=sel>=0?sel:C.length-1,c=C[i];
+  if(!c){$("cards").innerHTML="";return}
+  const buy=c.b,sell=c.v-c.b,d=buy-sell,p=c.v?buy/c.v:.5,bull=c.c>=c.o,warn=(bull&&d<0)||(!bull&&d>0);
+  const it=(k,v,cl="")=>`<div class="c"><small>${k}</small><b class="${cl}">${v}</b></div>`;
+  $("cards").innerHTML=it("Candle (UTC)",ts(c.t)+(i===C.length-1?" • চলমান":""))
+    +it("Buy",f(buy),"up")+it("Sell",f(sell),"dn")
+    +it("Delta",(d>0?"+":"")+f(d),d>=0?"up":"dn")+it("Total",f(c.v))
+    +it("Pressure",p.toFixed(3),p>.55?"up":p<.45?"dn":"")
+    +it("Candle",bull?"Bull":"Bear",bull?"up":"dn")
+    +it("Delta বিপরীত?",warn?"হ্যাঁ":"না",warn?"wr":"");
+}
+function meter(){
+  const n=C.length;if(!n){$("meter").innerHTML="";return}
+  const i=sel>=0?sel:n-1,one=C[i],last=C.slice(-12);
+  const bar=(t,bv,v)=>{const p=v?bv/v:.5,s=p>.55?"Buyers এগিয়ে":p<.45?"Sellers এগিয়ে":"প্রায় সমান";
+    return `<div class="m"><span>${t}: <b class="${p>.55?"up":p<.45?"dn":""}">${s}</b> · Buy ${(p*100).toFixed(0)}% / Sell ${(100-p*100).toFixed(0)}%</span><i><u style="width:${p*100}%"></u></i></div>`};
+  $("meter").innerHTML=bar(i===n-1?"চলমান candle":"নির্বাচিত candle",one.b,one.v)
+    +bar("শেষ ১২ candle",last.reduce((s,c)=>s+c.b,0),last.reduce((s,c)=>s+c.v,0));
+}
+function draw(){
+  cards();meter();
+  if(C.length){const L=C[C.length-1];$("px").textContent=fp(L.c);$("px").className="px "+(L.c>=L.o?"up":"dn");document.title=fp(L.c)+" "+sym+" · Order Flow"}
+  const cv=$("cv"),dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;
+  cv.width=W*dpr;cv.height=H*dpr;
+  const x=cv.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
+  if(!C.length)return;
+  vis=Math.max(15,Math.min(vis,C.length));off=Math.max(0,Math.min(off,C.length-vis));
+  const e=C.length-off,s=Math.max(0,e-vis),V=C.slice(s,e),n=V.length;
+  const up=css("--up"),dn=css("--dn"),mu=css("--mu"),ln=css("--ln"),ac=css("--ac"),wr=css("--wr");
+  const pl=8,pr=70,w=(W-pl-pr)/n,cx=i=>pl+(i+.5)*w;
+  const P=[[22,H*.52],[H*.52+22,H*.78],[H*.78+22,H-8]];
+  x.font="11px system-ui,sans-serif";
+  const lab=(t,y,top)=>{x.fillStyle=mu;x.textAlign="left";x.fillText(t,pl+2,top)};
+  const ax=(v,y)=>{x.fillStyle=mu;x.textAlign="right";x.fillText(v,W-4,y+4)};
+  const D=V.map(c=>2*c.b-c.v);let cum=0;const CU=D.map(d=>cum+=d);
+  if(sel>=s&&sel<e){x.fillStyle=ln;x.globalAlpha=.5;x.fillRect(pl+(sel-s)*w,8,w,H-16);x.globalAlpha=1}
+  // price
+  let [a,b]=P[0],hi=Math.max(...V.map(c=>c.h)),lo=Math.min(...V.map(c=>c.l));
+  const py=v=>a+(hi-v)/((hi-lo)||1)*(b-a);
+  lab("Price",0,14);ax(fp(hi),a);ax(fp(lo),b);
+  V.forEach((c,i)=>{const col=c.c>=c.o?up:dn;x.strokeStyle=x.fillStyle=col;
+    x.beginPath();x.moveTo(cx(i),py(c.h));x.lineTo(cx(i),py(c.l));x.stroke();
+    const y1=py(Math.max(c.o,c.c)),y2=py(Math.min(c.o,c.c));x.fillRect(cx(i)-w*.35,y1,w*.7,Math.max(1,y2-y1))});
+  const LC=C[C.length-1],ly=Math.max(P[0][0],Math.min(P[0][1],py(LC.c))),lc=LC.c>=LC.o?up:dn;
+  x.save();x.strokeStyle=lc;x.setLineDash([4,3]);x.beginPath();x.moveTo(pl,ly);x.lineTo(W-pr,ly);x.stroke();x.restore();
+  x.fillStyle=lc;x.fillRect(W-pr+2,ly-8,pr-4,16);x.fillStyle="#fff";x.textAlign="center";x.fillText(fp(LC.c),W-pr/2,ly+4);
+  // delta
+  [a,b]=P[1];const m=Math.max(...D.map(Math.abs))||1,mid=(a+b)/2;
+  lab("Delta",0,a-8);ax("+"+f(m),a);ax("−"+f(m),b);
+  x.strokeStyle=ln;x.beginPath();x.moveTo(pl,mid);x.lineTo(W-pr,mid);x.stroke();
+  D.forEach((d,i)=>{const c=V[i],h=d/m*(b-a)/2;x.fillStyle=d>=0?up:dn;
+    x.fillRect(cx(i)-w*.35,h>=0?mid-h:mid,w*.7,Math.max(1,Math.abs(h)));
+    if((c.c>=c.o&&d<0)||(c.c<c.o&&d>0)){x.fillStyle=wr;x.beginPath();x.arc(cx(i),a+3,2,0,7);x.fill()}});
+  // cumulative delta
+  [a,b]=P[2];const mx=Math.max(...CU,0),mn=Math.min(...CU,0),cy=v=>a+(mx-v)/((mx-mn)||1)*(b-a);
+  lab("Cumulative delta (দেখা যাওয়া candle)",0,a-8);ax(f(CU[n-1]),cy(CU[n-1]));
+  x.strokeStyle=ln;x.beginPath();x.moveTo(pl,cy(0));x.lineTo(W-pr,cy(0));x.stroke();
+  x.strokeStyle=ac;x.lineWidth=1.6;x.beginPath();CU.forEach((v,i)=>i?x.lineTo(cx(i),cy(v)):x.moveTo(cx(i),cy(v)));x.stroke();x.lineWidth=1;
+}
+const cv0=$("cv"),pts=new Map();let drag=null,pd=0;
+const vw=()=>{const E=C.length-off,s=Math.max(0,E-vis),n=Math.max(1,E-s);return{s,n,w:(cv0.clientWidth-78)/n}};
+const pick=e=>{const{s,n,w}=vw(),i=Math.floor((e.offsetX-8)/w),ab=s+i;sel=(i<0||i>=n||ab>=C.length-1)?-1:ab;redraw()};
+const zoom=(k,fx=1)=>{if(!C.length)return;const E=C.length-off,s=Math.max(0,E-vis),idx=s+fx*vis,nv=Math.max(15,Math.min(C.length,Math.round(vis*k)));vis=nv;off=Math.round(C.length-(idx-fx*nv+nv));redraw()};
+cv0.addEventListener("wheel",e=>{e.preventDefault();zoom(e.deltaY>0?1.15:1/1.15,Math.min(1,Math.max(0,(e.offsetX-8)/(cv0.clientWidth-78))))},{passive:false});
+cv0.onpointerdown=e=>{cv0.setPointerCapture(e.pointerId);pts.set(e.pointerId,e.clientX);drag={x:e.clientX,o:off,mv:0};pd=0;if(pts.size===1)pick(e)};
+cv0.onpointermove=e=>{
+  if(!pts.has(e.pointerId)){pick(e);return}
+  pts.set(e.pointerId,e.clientX);
+  if(pts.size===2){const[p,r]=[...pts.values()],d=Math.abs(p-r);if(pd&&d>0)zoom(pd/d);pd=d;drag=null;return}
+  if(!drag)return;
+  const dx=e.clientX-drag.x;if(Math.abs(dx)>4)drag.mv=1;
+  if(drag.mv){off=drag.o+Math.round(dx/vw().w);sel=-1;redraw()}else pick(e)
+};
+cv0.onpointerup=cv0.onpointercancel=e=>{pts.delete(e.pointerId);pd=0;drag=null};
+cv0.onpointerleave=()=>{if(!pts.size){sel=-1;redraw()}};
+$("zb").onclick=e=>{const z=e.target.dataset.z;if(!z)return;if(z==="in")zoom(.7);else if(z==="out")zoom(1/.7);else{vis=120;off=0;redraw()}};
+addEventListener("resize",redraw);
+start();
+</script>
+</body>
+</html>
